@@ -15,6 +15,8 @@
 import warnings
 import numpy as np
 import scipy.sparse as sp
+
+from scipy.spatial.distance import cdist
 from .sklearn_import.metrics.pairwise import euclidean_distances
 from .sklearn_import.utils.extmath import row_norms, squared_norm, cartesian
 from .sklearn_import.utils.validation import check_array, check_random_state, as_float_array, check_is_fitted
@@ -29,7 +31,7 @@ from k_means_constrained.sklearn_import.cluster.k_means_ import _validate_center
 from k_means_constrained.mincostflow_vectorized import SimpleMinCostFlowVectorized
 
 
-def k_means_constrained(X, n_clusters, size_min=None, size_max=None, init='k-means++',
+def k_means_constrained(X, n_clusters, size_min=None, size_max=None, norm='L2', init='k-means++',
                         n_init=10, max_iter=300, verbose=False,
                         tol=1e-4, random_state=None, copy_x=True, n_jobs=1,
                         return_n_iter=False):
@@ -49,6 +51,9 @@ def k_means_constrained(X, n_clusters, size_min=None, size_max=None, init='k-mea
     size_max : int, optional, default: None
         Constrain the label assignment so that each cluster has a maximum
         size of size_max. If None, no constrains will be applied
+
+    norm : {'L2', 'L1', 'Inf'}, optional
+        distance metric to use for evaluating clusters, default to 'L2' (euclidian)
 
     n_clusters : int
         The number of clusters to form as well as the number of
@@ -164,7 +169,18 @@ def k_means_constrained(X, n_clusters, size_min=None, size_max=None, init='k-mea
             init -= X_mean
 
     # precompute squared norms of data points
-    x_squared_norms = row_norms(X, squared=True)
+    norm_str = norm.upper()
+    if norm_str == 'L1':
+        x_squared_norms = row_norms(X, squared=True)    
+    elif norm_str == 'L1':
+        x_squared_norms = cdist(X, np.zeros((1,2)), lambda u, v: np.linalg.norm(u-v, ord=1))
+        x_squared_norms = np.squeeze(np.square(x_squared_norms))
+    elif norm_str == 'INF':
+        x_squared_norms = cdist(X, np.zeros((1,2)), lambda u, v: np.linalg.norm(u-v, ord=np.PINF))
+        x_squared_norms = np.squeeze(np.square(x_squared_norms))
+    else:
+        x_squared_norms = row_norms(X, squared=True)
+
 
     best_labels, best_inertia, best_centers = None, None, None
 
@@ -175,7 +191,7 @@ def k_means_constrained(X, n_clusters, size_min=None, size_max=None, init='k-mea
             # run a k-means once
             labels, inertia, centers, n_iter_ = kmeans_constrained_single(
                 X, n_clusters,
-                size_min=size_min, size_max=size_max,
+                size_min=size_min, size_max=size_max, norm=norm,
                 max_iter=max_iter, init=init, verbose=verbose, tol=tol,
                 x_squared_norms=x_squared_norms, random_state=random_state)
             # determine if these results are the best so far
@@ -189,7 +205,7 @@ def k_means_constrained(X, n_clusters, size_min=None, size_max=None, init='k-mea
         seeds = random_state.randint(np.iinfo(np.int32).max, size=n_init)
         results = Parallel(n_jobs=n_jobs, verbose=0)(
             delayed(kmeans_constrained_single)(X, n_clusters,
-                                               size_min=size_min, size_max=size_max,
+                                               size_min=size_min, size_max=size_max, norm=norm,
                                                max_iter=max_iter, init=init,
                                                verbose=verbose, tol=tol,
                                                x_squared_norms=x_squared_norms,
@@ -215,7 +231,7 @@ def k_means_constrained(X, n_clusters, size_min=None, size_max=None, init='k-mea
         return best_centers, best_labels, best_inertia
 
 
-def kmeans_constrained_single(X, n_clusters, size_min=None, size_max=None,
+def kmeans_constrained_single(X, n_clusters, size_min=None, size_max=None, norm='L2',
                               max_iter=300, init='k-means++',
                               verbose=False, x_squared_norms=None,
                               random_state=None, tol=1e-4):
@@ -233,6 +249,9 @@ def kmeans_constrained_single(X, n_clusters, size_min=None, size_max=None,
     size_max : int, optional, default: None
         Constrain the label assignment so that each cluster has a maximum
         size of size_max. If None, no constrains will be applied
+
+    norm : {'L2', 'L1', 'Inf'}, optional
+        distance metric to use for evaluating clusters, default to 'L2' (euclidian)
 
     n_clusters : int
         The number of clusters to form as well as the number of
@@ -327,7 +346,7 @@ def kmeans_constrained_single(X, n_clusters, size_min=None, size_max=None,
         centers_old = centers.copy()
         # labels assignment is also called the E-step of EM
         labels, inertia = \
-            _labels_constrained(X, centers, size_min, size_max, distances=distances)
+            _labels_constrained(X, centers, size_min, size_max, distances=distances, norm=norm)
 
         # computation of the means is also called the M-step of EM
         if sp.issparse(X):
@@ -355,12 +374,12 @@ def kmeans_constrained_single(X, n_clusters, size_min=None, size_max=None,
         # rerun E-step in case of non-convergence so that predicted labels
         # match cluster centers
         best_labels, best_inertia = \
-            _labels_constrained(X, centers, size_min, size_max, distances=distances)
+            _labels_constrained(X, centers, size_min, size_max, distances=distances, norm=norm)
 
     return best_labels, best_inertia, best_centers, i + 1
 
 
-def _labels_constrained(X, centers, size_min, size_max, distances):
+def _labels_constrained(X, centers, size_min, size_max, distances, norm='L2'):
     """Compute labels using the min and max cluster size constraint
 
     This will overwrite the 'distances' array in-place.
@@ -382,6 +401,9 @@ def _labels_constrained(X, centers, size_min, size_max, distances):
     distances : numpy array, shape (n_samples,)
         Pre-allocated array in which distances are stored.
 
+    norm : {'L2', 'L1', 'Inf'}, optional
+        distance metric to use for evaluating clusters, default to 'L2' (euclidian)
+
     Returns
     -------
     labels : numpy array, dtype=np.int, shape (n_samples,)
@@ -395,7 +417,15 @@ def _labels_constrained(X, centers, size_min, size_max, distances):
 
     # Distances to each centre C. (the `distances` parameter is the distance to the closest centre)
     # K-mean original uses squared distances but this equivalent for constrained k-means
-    D = euclidean_distances(X, C, squared=False)
+    norm_str = norm.upper()
+    if norm_str == 'L2':
+        D = euclidean_distances(X, C, squared=False)    
+    elif norm_str == 'L1':
+        D = cdist(X, C, lambda u, v: np.linalg.norm(u-v, ord=1))
+    elif norm_str == 'INF':
+        D = cdist(X, C, lambda u, v: np.linalg.norm(u-v, ord=np.PINF))
+    else:
+        D = euclidean_distances(X, C, squared=False)
 
     edges, costs, capacities, supplies, n_C, n_X = minimum_cost_flow_problem_graph(X, C, D, size_min, size_max)
     labels = solve_min_cost_flow_graph(edges, costs, capacities, supplies, n_C, n_X)
@@ -510,6 +540,9 @@ class KMeansConstrained(KMeans):
         Constrain the label assignment so that each cluster has a maximum
         size of size_max. If None, no constrains will be applied
 
+    norm : {'L2', 'L1', 'Inf'}, optional
+        distance metric to use for evaluating clusters, default to 'L2' (euclidian)
+
     init : {'k-means++', 'random' or an ndarray}
         Method for initialization, defaults to 'k-means++':
 
@@ -607,11 +640,12 @@ class KMeansConstrained(KMeans):
         https://github.com/google/or-tools/blob/master/ortools/graph/min_cost_flow.h
     """
 
-    def __init__(self, n_clusters=8, size_min=None, size_max=None, init='k-means++', n_init=10, max_iter=300, tol=1e-4,
+    def __init__(self, n_clusters=8, size_min=None, size_max=None, norm='L2', init='k-means++', n_init=10, max_iter=300, tol=1e-4,
                  verbose=False, random_state=None, copy_x=True, n_jobs=1):
 
         self.size_min = size_min
         self.size_max = size_max
+        self.norm = norm
 
         super().__init__(n_clusters=n_clusters, init=init, n_init=n_init, max_iter=max_iter, tol=tol,
                          verbose=verbose, random_state=random_state, copy_x=copy_x, n_jobs=n_jobs)
@@ -637,6 +671,7 @@ class KMeansConstrained(KMeans):
             k_means_constrained(
                 X, n_clusters=self.n_clusters,
                 size_min=self.size_min, size_max=self.size_max,
+                norm = self.norm,
                 init=self.init,
                 n_init=self.n_init, max_iter=self.max_iter, verbose=self.verbose,
                 tol=self.tol, random_state=random_state, copy_x=self.copy_x,
@@ -644,7 +679,7 @@ class KMeansConstrained(KMeans):
                 return_n_iter=True)
         return self
 
-    def predict(self, X, size_min='init', size_max='init'):
+    def predict(self, X, size_min='init', size_max='init', norm='L2'):
         """
         Predict the closest cluster each sample in X belongs to given the provided constraints.
         The constraints can be temporally overridden when determining which cluster each datapoint is assigned to.
@@ -667,6 +702,9 @@ class KMeansConstrained(KMeans):
             size of size_max. If None, no constrains will be applied.
             If 'init' the value provided during initialisation of the
             class will be used.
+
+        norm : {'L2', 'L1', 'Inf'}, optional
+            distance metric to use for evaluating clusters, default to 'L2' (euclidian)
 
         Returns
         -------
@@ -710,7 +748,7 @@ class KMeansConstrained(KMeans):
             raise ValueError("The product of size_min and n_clusters cannot exceed the number of samples (X)")
 
         labels, inertia = \
-            _labels_constrained(X, self.cluster_centers_, size_min, size_max, distances=distances)
+            _labels_constrained(X, self.cluster_centers_, size_min, size_max, distances=distances, norm=norm)
 
         return labels
 
