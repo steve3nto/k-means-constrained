@@ -5,9 +5,6 @@ trigger:
 
 strategy:
   matrix:
-    Linux_Python36:
-      IMAGE_NAME: 'ubuntu-16.04'
-      PYTHON_VERSION: '3.6'
     Linux_Python37:
       IMAGE_NAME: 'ubuntu-16.04'
       PYTHON_VERSION: '3.7'
@@ -17,9 +14,6 @@ strategy:
     Linux_Python39:
       IMAGE_NAME: 'ubuntu-16.04'
       PYTHON_VERSION: '3.9'
-    Windows_Python36:
-      IMAGE_NAME: 'vs2017-win2016'
-      PYTHON_VERSION: '3.6'
     Windows_Python37:
       IMAGE_NAME: 'vs2017-win2016'
       PYTHON_VERSION: '3.7'
@@ -29,9 +23,6 @@ strategy:
     Windows_Python39:
       IMAGE_NAME: 'vs2017-win2016'
       PYTHON_VERSION: '3.9'
-    MacOS_Python36:
-      IMAGE_NAME: 'macos-10.14'
-      PYTHON_VERSION: '3.6'
     MacOS_Python37:
       IMAGE_NAME: 'macos-10.14'
       PYTHON_VERSION: '3.7'
@@ -69,10 +60,9 @@ steps:
 # Use bash for all platforms including Windows
 - bash: |
     set -e
-    cd $(mktemp -d)  # change to tempory directory
-    pip install $(System.DefaultWorkingDirectory)/dist/*.tar.gz
-    pip install -r $(System.DefaultWorkingDirectory)/requirements-dev.txt
-    pytest $(System.DefaultWorkingDirectory)/tests
+    pip install dist/*.tar.gz
+    pip install -r requirements-dev.txt
+    pytest tests
     pip uninstall -y k-means-constrained
   displayName: 'Install wheel and test'
 
@@ -80,14 +70,8 @@ steps:
 # Use bash for all platforms including Windows
 - bash: |
     set -e
-    cd $(mktemp -d)  # change to tempory directory
-    pip install $(System.DefaultWorkingDirectory)/dist/*.tar.gz
-    pip install -r $(System.DefaultWorkingDirectory)/requirements-dev.txt
-    pytest $(System.DefaultWorkingDirectory)/tests
+    pip install dist/*.tar.gz
+    pip install -r requirements-dev.txt
+    pytest tests
     pip uninstall -y k-means-constrained
   displayName: 'Compile sdist, install and test'
-
-
-
-
-
